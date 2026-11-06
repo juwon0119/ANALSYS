@@ -145,10 +145,12 @@ def _annotation_diff(reference_path, compared_path, selected):
                 '단독 표기 검출. 해당 도면 위치가 다른 표기와 대응하는지 검토가 필요합니다.',
                 v if src=='reference' else '',v if src=='compared' else '',
                 box if src=='reference' else None,box if src=='compared' else None))
-    if 'shape' in selected:
+    if selected & {'shape', 'dimension'}:
         from feature_geometry_compare import compare_native_geometry, attach_verified_dxf_positions
         native = compare_native_geometry(left,right)
+        native = [f for f in native if f.kind in selected]
         findings.extend(attach_verified_dxf_positions(native,reference_path,compared_path))
+    if 'shape' in selected:
         from feature_geometry_compare import compare_closed_outline_geometry
         findings.extend(compare_closed_outline_geometry(left,right))
         ca,_=_geometry_counts(left); cb,_=_geometry_counts(right)

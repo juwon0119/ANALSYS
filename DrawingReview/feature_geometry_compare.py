@@ -22,15 +22,42 @@ class Ring:
     handle:str
 
 
+def _geometry_entities(doc):
+    """Expand ordinary block instances in world coordinates, excluding annotations.
+
+    Virtual entities have no unique modelspace handle: never invent one for
+    highlighting. Cycles, deeply nested blocks and clipped inserts are skipped.
+    """
+    def walk(entities, ancestors=()):
+        for ent in entities:
+            if ent.dxftype() != 'INSERT':
+                yield ent
+                continue
+            name = ent.dxf.name
+            if name in ancestors or len(ancestors) >= 16:
+                continue
+            from ezdxf.xclip import XClip
+            if XClip(ent).has_clipping_path:
+                continue
+            instances = ent.multi_insert() if ent.mcount > 1 else (ent,)
+            for instance in instances:
+                yield from walk(instance.virtual_entities(), ancestors + (name,))
+    yield from walk(doc.modelspace())
+
+
+def _geometry_handle(ent):
+    return str(ent.dxf.get('handle') or 'virtual')
+
+
 def _rings(doc):
     output=[]
-    for ent in doc.modelspace():
+    for ent in _geometry_entities(doc):
         if ent.dxftype() == 'CIRCLE':
             try:
                 x,y=float(ent.dxf.center.x),float(ent.dxf.center.y)
                 r=float(ent.dxf.radius)
                 if math.isfinite(r) and r>1e-6:
-                    output.append(Ring(x,y,r,str(ent.dxf.handle)))
+                    output.append(Ring(x,y,r,_geometry_handle(ent)))
             except (AttributeError,TypeError,ValueError):
                 continue
     return output
@@ -132,7 +159,7 @@ def _line_lengths_by_group(doc, group, center_scale):
     ymin=min(p[1] for p in points);ymax=max(p[1] for p in points)
     pad=center_scale*.22
     lengths=[]
-    for ent in doc.modelspace():
+    for ent in _geometry_entities(doc):
         if ent.dxftype()!='LINE':continue
         try:
             a=(float(ent.dxf.start.x),float(ent.dxf.start.y))
@@ -334,22 +361,22 @@ def _closed_outlines(doc):
     visually touching but unconnected geometry as a closed profile.
     """
     outlines=[]
-    for ent in doc.modelspace():
-        if ent.dxftype()=='LWPOLYLINE' and bool(ent.closed):
+    for ent in _geometry_entities(doc):
+        if ent.dxftype()=='LWPOLYLINE' and bool(ent.closed) and not ent.has_arc:
             try:
                 pts=[(float(x),float(y)) for x,y,*_ in ent.get_points('xy')]
                 if 3<=len(pts)<=16:
-                    outlines.append((pts,[str(ent.dxf.handle)]))
+                    outlines.append((pts,[_geometry_handle(ent)]))
             except (TypeError,ValueError,AttributeError):pass
     # Build small cycles from LINE endpoints (exact CAD coordinates to 0.01).
     lines=[];incidence=defaultdict(list)
-    for ent in doc.modelspace():
+    for ent in _geometry_entities(doc):
         if ent.dxftype()!='LINE':continue
         try:
             a=(round(ent.dxf.start.x,2),round(ent.dxf.start.y,2))
             b=(round(ent.dxf.end.x,2),round(ent.dxf.end.y,2))
             if a==b:continue
-            idx=len(lines);lines.append((a,b,str(ent.dxf.handle)))
+            idx=len(lines);lines.append((a,b,_geometry_handle(ent)))
             incidence[a].append(idx);incidence[b].append(idx)
         except (AttributeError,ValueError):continue
     # Only components with every vertex of degree two are unambiguous loops.
